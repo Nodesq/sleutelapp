@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Car Key Management — Persistent</title>
+
+  <!-- Use React + Babel for JSX in-browser (single-file) -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    :root {
+      --primary: #3b82f6;
+      --primary-foreground: #ffffff;
+      --muted-foreground: #64748b;
+      --card: #ffffff;
+      --border: #e2e8f0;
+      --radius: 0.5rem;
+      --destructive: #ef4444;
+      --success: #16a34a;
+      --bg: #f8fafc;
+      --fg: #0f172a;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+      background:var(--bg);
+      color:var(--fg);
+      line-height:1.4;
+      padding:20px;
+    }
+    .container{max-width:1100px;margin:0 auto}
+    header{ text-align:center;margin-bottom:20px }
+    h1{margin-bottom:6px;font-size:1.6rem}
+    .subtitle{color:var(--muted-foreground)}
+    .controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:18px 0}
+    .search-input{flex:1;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--card)}
+    .btn{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:8px;border:1px solid transparent;cursor:pointer;font-weight:600}
+    .btn-primary{background:var(--primary);color:var(--primary-foreground)}
+    .btn-outline{background:transparent;border:1px solid var(--border)}
+    .btn-danger{background:var(--destructive);color:white}
+    .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:18px}
+    .stat-card{background:var(--card);border:1px solid var(--border);padding:12px;border-radius:10px}
+    .keys-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;margin-bottom:18px}
+    .key-card{background:var(--card);border:1px solid var(--border);padding:12px;border-radius:10px;display:flex;flex-direction:column;gap:8px}
+    .key-top{display:flex;justify-content:space-between;align-items:flex-start}
+    .key-id{font-weight:700}
+    .badge{padding:6px 8px;border-radius:999px;font-weight:700;font-size:0.8rem}
+    .badge.available{background:#ecfdf5;color:var(--success);border:1px solid #c6f6d5}
+    .badge.in-use{background:#fff1f2;color:#dc2626;border:1px solid #fecaca}
+    .meta{color:var(--muted-foreground);font-size:0.9rem}
+    .card-actions{display:flex;gap:8px;margin-top:auto}
+    .transactions-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:8px}
+    .transaction-item{display:flex;justify-content:space-between;padding:8px 6px;border-bottom:1px solid var(--border)}
+    .transaction-item:last-child{border-bottom:none}
+    /* modal */
+    .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:200}
+    .modal{background:var(--card);padding:18px;border-radius:10px;min-width:320px;max-width:520px;border:1px solid var(--border)}
+    .form-row{margin-bottom:10px}
+    input[type="text"]{width:100%;padding:10px;border-radius:8px;border:1px solid var(--border)}
+    .small{font-size:0.85rem;color:var(--muted-foreground)}
+    footer{margin-top:18px;color:var(--muted-foreground);text-align:center;font-size:0.9rem}
+    @media (max-width:640px){ .controls{flex-direction:column} }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useMemo } = React;
+
+    // Utility: generate simple unique IDs
+    function uid(prefix = "") {
+      return prefix + Date.now().toString(36) + Math.random().toString(36).slice(2,7);
+    }
+
+    // Format date/time in readable form
+    function formatDate(dt) {
+      if (!dt) return "";
+      const d = new Date(dt);
+      return d.toLocaleString();
+    }
+
+    // Initial fallback data (used only the first time)
+    const FALLBACK_KEYS = [
+      { id: "CK001", carModel: "Toyota Camry", licensePlate: "ABC-123", status: "available", lastUpdated: new Date().toISOString() },
+      { id: "CK002", carModel: "Honda Civic", licensePlate: "XYZ-789", status: "in-use", holder: "John Smith", lastUpdated: new Date(Date.now()-3600*1000).toISOString() },
+      { id: "CK003", carModel: "Ford F-150", licensePlate: "DEF-456", status: "available", lastUpdated: new Date().toISOString() },
+      { id: "CK004", carModel: "Tesla Model 3", licensePlate: "TES-123", status: "in-use", holder: "Sarah Johnson", lastUpdated: new Date(Date.now()-2*3600*1000).toISOString() },
+      { id: "CK005", carModel: "BMW X5", licensePlate: "BMW-987", status: "available", lastUpdated: new Date().toISOString() },
+      { id: "CK006", carModel: "Chevrolet Silverado", licensePlate: "CHE-456", status: "in-use", holder: "Mike Wilson", lastUpdated: new Date(Date.now()-3*3600*1000).toISOString() },
+      { id: "CK007", carModel: "Audi A4", licensePlate: "AUD-321", status: "available", lastUpdated: new Date().toISOString() },
+      { id: "CK008", carModel: "Mercedes C-Class", licensePlate: "MER-654", status: "available", lastUpdated: new Date().toISOString() },
+    ];
+
+    const FALLBACK_TX = [
+      { id: "T1", keyId: "CK002", action: "check-out", user: "John Smith", timestamp: new Date(Date.now()-3600*1000).toISOString()},
+      { id: "T2", keyId: "CK004", action: "check-out", user: "Sarah Johnson", timestamp: new Date(Date.now()-2*3600*1000).toISOString()},
+      { id: "T3", keyId: "CK006", action: "check-out", user: "Mike Wilson", timestamp: new Date(Date.now()-3*3600*1000).toISOString()},
+    ];
+
+    function App() {
+      const [carKeys, setCarKeys] = useState([]);
+      const [transactions, setTransactions] = useState([]);
+      const [search, setSearch] = useState("");
+      const [isCheckOutOpen, setIsCheckOutOpen] = useState(false);
+      const [activeKey, setActiveKey] = useState(null); // key object selected for checkout
+      const [checkoutUser, setCheckoutUser] = useState("");
+      const [showHistory, setShowHistory] = useState(false);
+
+      // Load from localStorage on mount
+      useEffect(()=> {
+        try {
+          const rawKeys = localStorage.getItem("carKeys");
+          const rawTx = localStorage.getItem("transactions");
+          if (rawKeys) {
+            const parsedKeys = JSON.parse(rawKeys);
+            setCarKeys(parsedKeys);
+          } else {
+            setCarKeys(FALLBACK_KEYS);
+          }
+          if (rawTx) {
+            setTransactions(JSON.parse(rawTx));
+          } else {
+            setTransactions(FALLBACK_TX);
+          }
+        } catch(e) {
+          console.error("Failed to load saved data, using fallback.", e);
+          setCarKeys(FALLBACK_KEYS);
+          setTransactions(FALLBACK_TX);
+        }
+      }, []);
+
+      // Persist whenever carKeys or transactions change
+      useEffect(()=> {
+        try {
+          localStorage.setItem("carKeys", JSON.stringify(carKeys));
+          localStorage.setItem("transactions", JSON.stringify(transactions));
+        } catch(e) {
+          console.error("Failed to save to localStorage", e);
+        }
+      }, [carKeys, transactions]);
+
+      // Derived stats
+      const stats = useMemo(()=> {
+        const total = carKeys.length;
+        const inUse = carKeys.filter(k => k.status === "in-use").length;
+        const available = total - inUse;
+        return { total, inUse, available };
+      }, [carKeys]);
+
+      // Filtered keys for UI
+      const visibleKeys = useMemo(()=> {
+        const q = search.trim().toLowerCase();
+        if (!q) return carKeys;
+        return carKeys.filter(k =>
+          k.id.toLowerCase().includes(q) ||
+          k.carModel.toLowerCase().includes(q) ||
+          (k.licensePlate || "").toLowerCase().includes(q) ||
+          (k.holder || "").toLowerCase().includes(q)
+        );
+      }, [carKeys, search]);
+
+      // Open checkout modal for a key
+      function openCheckOut(key) {
+        setActiveKey(key);
+        setCheckoutUser("");
+        setIsCheckOutOpen(true);
+      }
+
+      // Checkout action
+      function handleCheckOut() {
+        if (!checkoutUser.trim()) {
+          alert("Please enter a name for the user taking the key.");
+          return;
+        }
+        const keyId = activeKey.id;
+        setCarKeys(prev => prev.map(k => k.id === keyId ? ({
+          ...k,
+          status: "in-use",
+          holder: checkoutUser.trim(),
+          lastUpdated: new Date().toISOString()
+        }) : k));
+        const tx = {
+          id: uid("T"),
+          keyId,
+          action: "check-out",
+          user: checkoutUser.trim(),
+          timestamp: new Date().toISOString()
+        };
+        setTransactions(prev => [tx, ...prev]);
+        setIsCheckOutOpen(false);
+        setActiveKey(null);
+      }
+
+      // Check-in action (return)
+      function handleCheckIn(key) {
+        const keyId = key.id;
+        setCarKeys(prev => prev.map(k => k.id === keyId ? ({
+          ...k,
+          status: "available",
+          holder: undefined,
+          lastUpdated: new Date().toISOString()
+        }) : k));
+        const tx = {
+          id: uid("T"),
+          keyId,
+          action: "check-in",
+          user: key.holder || "Unknown",
+          timestamp: new Date().toISOString()
+        };
+        setTransactions(prev => [tx, ...prev]);
+      }
+
+      // Reset data to fallback (ask confirmation)
+      function handleReset() {
+        if (!confirm("Reset data to the original initial dataset? This will overwrite saved data in your browser.")) return;
+        setCarKeys(FALLBACK_KEYS);
+        setTransactions(FALLBACK_TX);
+      }
+
+      // Export transactions to CSV
+      function exportCSV() {
+        const rows = [["id","keyId","action","user","timestamp"]];
+        transactions.forEach(t => rows.push([t.id,t.keyId,t.action,t.user,t.timestamp]));
+        const csv = rows.map(r => r.map(cell => `"${String(cell).replace(/"/g,'""')}"`).join(",")).join("\n");
+        const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "transactions.csv";
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+
+      // Small helper to display lastUpdated nicely for a key
+      function lastUpdatedText(k) {
+        if (!k.lastUpdated) return "";
+        return formatDate(k.lastUpdated);
+      }
+
+      return (
+        <div className="container">
+          <header>
+            <h1>Car Key Management</h1>
+            <div className="subtitle">Take a key, return a key — data is saved locally in your browser.</div>
+          </header>
+
+          <div className="controls">
+            <input className="search-input" placeholder="Search by key id, model, plate or holder..." value={search} onChange={(e)=>setSearch(e.target.value)} />
+            <button className="btn btn-outline" onClick={() => { setShowHistory(true); setShowHistory(true); setShowHistory(true); setShowHistory(true); setShowHistory(true); setShowHistory(true); }}>
+              View History
+            </button>
+            <button className="btn btn-outline" onClick={exportCSV}>Export CSV</button>
+            <button className="btn btn-outline" onClick={handleReset}>Reset Data</button>
+            <div style={{marginLeft:"auto"}} className="small">{new Date().toLocaleString()}</div>
+          </div>
+
+          <div className="stats">
+            <div className="stat-card">
+              <div className="small">Total keys</div>
+              <div style={{fontSize:18,fontWeight:800}}>{stats.total}</div>
+            </div>
+            <div className="stat-card">
+              <div className="small">In use</div>
+              <div style={{fontSize:18,fontWeight:800,color:"#b91c1c"}}>{stats.inUse}</div>
+            </div>
+            <div className="stat-card">
+              <div className="small">Available</div>
+              <div style={{fontSize:18,fontWeight:800,color:"#15803d"}}>{stats.available}</div>
+            </div>
+          </div>
+
+          <section>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+              <h2 style={{margin:0,fontSize:18}}>Keys</h2>
+              <div className="small">Showing {visibleKeys.length} / {carKeys.length}</div>
+            </div>
+
+            <div className="keys-grid">
+              {visibleKeys.map(k => (
+                <div className="key-card" key={k.id}>
+                  <div className="key-top">
+                    <div>
+                      <div className="key-id">{k.id} — <span style={{fontWeight:600}}>{k.carModel}</span></div>
+                      <div className="meta">{k.licensePlate}</div>
+                    </div>
+                    <div style={{textAlign:"right"}}>
+                      <div className={`badge ${k.status === "available" ? "available" : "in-use"}`}>
+                        {k.status === "available" ? "Available" : "In Use"}
+                      </div>
+                      <div className="small" style={{marginTop:8}}>{lastUpdatedText(k)}</div>
+                    </div>
+                  </div>
+
+                  <div className="key-details small">
+                    {k.status === "in-use" ? <div><strong>Holder:</strong> {k.holder}</div> : <div><strong>Location:</strong> Key cabinet</div>}
+                  </div>
+
+                  <div className="card-actions">
+                    {k.status === "available" ? (
+                      <button className="btn btn-primary" onClick={()=>openCheckOut(k)}>Check out</button>
+                    ) : (
+                      <>
+                        <button className="btn btn-outline" onClick={()=>openCheckOut(k)}>Change holder</button>
+                        <button className="btn" onClick={()=>handleCheckIn(k)}>Check in</button>
+                      </>
+                    )}
+                    <button className="btn btn-outline" onClick={()=> {
+                      // Quick add a check-out as demo (opens modal but prefills user)
+                      setActiveKey(k); setCheckoutUser(k.holder || ""); setIsCheckOutOpen(true);
+                    }}>Details</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="transactions-section">
+            <h2 style={{fontSize:18}}>Recent Transactions</h2>
+            <div className="transactions-card" style={{marginTop:10}}>
+              {transactions.length === 0 ? (
+                <div style={{padding:16}} className="small">No transactions yet.</div>
+              ) : transactions.slice(0,8).map(tx => (
+                <div className="transaction-item" key={tx.id}>
+                  <div>
+                    <div style={{fontWeight:700}}>{tx.action === "check-out" ? "Checked out" : "Checked in"} — {tx.keyId}</div>
+                    <div className="small">{tx.user} • {formatDate(tx.timestamp)}</div>
+                  </div>
+                  <div style={{alignSelf:"center", fontWeight:700, color: tx.action==="check-out" ? "#b91c1c" : "#15803d"}}>
+                    {tx.action === "check-out" ? "OUT" : "IN"}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <footer>
+            Local persistence via <strong>localStorage</strong>. Data is stored only in this browser on this device.
+          </footer>
+
+          {/* Check-out modal */}
+          {isCheckOutOpen && activeKey && (
+            <div className="modal-overlay" onClick={()=>{setIsCheckOutOpen(false); setActiveKey(null);}}>
+              <div className="modal" onClick={(e)=>e.stopPropagation()}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                  <div>
+                    <div style={{fontWeight:800}}>Check out {activeKey.id}</div>
+                    <div className="small">{activeKey.carModel} • {activeKey.licensePlate}</div>
+                  </div>
+                  <button className="btn btn-outline" onClick={()=>{setIsCheckOutOpen(false); setActiveKey(null)}}>Close</button>
+                </div>
+
+                <div className="form-row">
+                  <label className="small">User name</label>
+                  <input type="text" value={checkoutUser} onChange={(e)=>setCheckoutUser(e.target.value)} placeholder="Enter user name" />
+                </div>
+
+                <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+                  <button className="btn btn-outline" onClick={()=>{setIsCheckOutOpen(false); setActiveKey(null)}}>Cancel</button>
+                  <button className="btn btn-primary" onClick={handleCheckOut}>Confirm Check out</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* History modal */}
+          {showHistory && (
+            <div className="modal-overlay" onClick={()=>setShowHistory(false)}>
+              <div className="modal" onClick={(e)=>e.stopPropagation()}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                  <div style={{fontWeight:800}}>Transaction History</div>
+                  <button className="btn btn-outline" onClick={()=>setShowHistory(false)}>Close</button>
+                </div>
+
+                <div style={{maxHeight:360,overflowY:"auto"}}>
+                  {transactions.length === 0 ? (
+                    <div className="small">No transactions recorded yet.</div>
+                  ) : transactions.map(tx => (
+                    <div key={tx.id} style={{padding:"8px 0",borderBottom:"1px solid var(--border)"}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                        <div style={{fontWeight:700}}>{tx.keyId} — {tx.action === "check-out" ? "Checked out" : "Checked in"}</div>
+                        <div className="small">{formatDate(tx.timestamp)}</div>
+                      </div>
+                      <div className="small">{tx.user}</div>
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{marginTop:10,display:"flex",justifyContent:"flex-end",gap:8}}>
+                  <button className="btn btn-outline" onClick={()=> {
+                    if (!confirm("Clear transaction history? This will remove transaction records but keep keys. Proceed?")) return;
+                    setTransactions([]);
+                  }}>Clear History</button>
+                  <button className="btn" onClick={()=> {
+                    // close
+                    setShowHistory(false);
+                  }}>Done</button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
